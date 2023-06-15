@@ -2,6 +2,7 @@
 // Created by andre on 5/31/23.
 //
 
+#include <set>
 #include "JacobiMethods.h"
 
 namespace Thesis {
@@ -186,6 +187,7 @@ namespace Thesis {
                 did not converge to zero. See the description of WORK
                 above for details.
 *********************************************************************************/
+/*
 void sequential_dgesvd(SVD_OPTIONS jobu,
                        SVD_OPTIONS jobv,
                        size_t m,
@@ -666,6 +668,7 @@ void omp_dgesvd(SVD_OPTIONS jobu,
 
 //  delete []ordering_array;
 }
+*/
 
 void omp_mpi_dgesvd(SVD_OPTIONS jobu,
                     SVD_OPTIONS jobv,
@@ -678,6 +681,7 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
                     size_t ldv) {
   // Get iterator
   auto iterator = get_iterator(COL_MAJOR);
+  size_t num_of_threads = omp_thread_count();
 
   // Get rank of mpi proccess and size of process
   int rank, size;
@@ -699,16 +703,17 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
     }
   }
 
-  // Create scheduler
   size_t m_ordering = (n + 1) / 2;
+  size_t k_ordering_len = n / 2;
+  size_t number_of_columns = 2 * ( n/2);
+  size_t number_of_last_columns = k_ordering_len % size;
+  size_t number_of_columns_except_last = k_ordering_len / size;
   // Stopping condition in Hogben, L. (Ed.). (2013). Handbook of Linear Algebra (2nd ed.). Chapman and Hall/CRC. https://doi.org/10.1201/b16113
   size_t istop = 0;
   size_t stop_condition = n * (n - 1) / 2;
-  uint16_t reps = 0;
   uint16_t maxIterations = 1;
 
-  do {
-    istop = 0;
+  for(auto number_iterations = 0; number_iterations < maxIterations; ++number_iterations){
     // Ordering in  A. Sameh. On Jacobi and Jacobi-like algorithms for a parallel computer. Math. Comput., 25:579–590,
     // 1971
     for (size_t k = 1; k < m_ordering; ++k) {
@@ -716,12 +721,28 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
       size_t p_trans = 0;
       size_t q_trans = 0;
 
-      std::vector<std::tuple<int, int>> k_ordering;
+      /* --------------------------------------- Local variables ----------------------------------------------*/
+      // All points vector tuple
+      std::vector<std::tuple<size_t, size_t>> local_points;
+      // Ordered set of coordinates
+      std::set<size_t> local_set_columns;
+      // Set converted to vector
+      std::vector<size_t> local_set_to_vector;
+      // Local map that convert point coordinate to local column index
+      std::unordered_map<size_t, size_t> column_index_to_local_column_index;
+      /* --------------------------------------- Root rank variables ----------------------------------------------*/
+      // Distribution of points by node (index is rank, and content is vector of points). To use for data distribution and extraction.
+      std::vector<std::vector<std::tuple<size_t, size_t>>> root_distribution(size);
+      // ordered set of points by rank. To use for data distribution and extraction.
+      std::vector<std::set<size_t>> root_set_columns_by_rank(size);
+      // convert to vector to map
+      std::vector<std::vector<size_t>> root_set_columns_vector_by_rank(size);
+      // Assign column index to set index.
+      std::vector<std::unordered_map<size_t, size_t>> root_column_index_to_local_column_index(size);
 
-      if(rank == ROOT_RANK){
-        k_ordering = std::vector<std::tuple<int, int>>();
-      }
 
+      /* ------------------------------------- Query points for k -------------------------------------------------*/
+      #pragma omp parallel for num_threads(size) private(p, p_trans, q_trans)
       for (size_t q = m_ordering - k + 1; q <= n - k; ++q) {
         if (m_ordering - k + 1 <= q && q <= (2 * m_ordering) - (2 * k)) {
           p = ((2 * m_ordering) - (2 * k) + 1) - q;
@@ -735,40 +756,187 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
         p_trans = p - 1;
         q_trans = q - 1;
 
-        // add to distribution set
-        if(rank == ROOT_RANK)
-          k_ordering.emplace_back(p_trans, q_trans);
+        if(rank == ROOT_RANK){
+//          std::cout << "(" << p_trans << ", " << q_trans << ")\n";
+//          std::cout << "(" << omp_get_thread_num() << ")\n";
+          root_distribution[omp_get_thread_num()].emplace_back(p_trans, q_trans);
+          root_set_columns_by_rank[omp_get_thread_num()].insert(p_trans);
+          root_set_columns_by_rank[omp_get_thread_num()].insert(q_trans);
+        }
 
-        /*
+        if(rank == omp_get_thread_num()){
+//          std::cout << "local point rank: " << rank << ", (" << p_trans << ", " << q_trans << ")\n";
+          local_points.emplace_back(p_trans,q_trans);
+          local_set_columns.insert(p_trans);
+          local_set_columns.insert(q_trans);
+        }
+      }
+
+      // convert local set to vector
+      local_set_to_vector = std::vector<size_t>(local_set_columns.begin(), local_set_columns.end());
+      // map coordinates to local column indices
+      size_t local_set_to_vector_size = local_set_to_vector.size();
+      for(auto i = 0; i < local_set_to_vector_size; ++i){
+        column_index_to_local_column_index[local_set_to_vector[i]] = i;
+      }
+
+      if(rank == ROOT_RANK){
+        for(auto index_rank = 0; index_rank < size; ++index_rank){
+          root_set_columns_vector_by_rank[index_rank] = std::vector<size_t>(root_set_columns_by_rank[index_rank].begin(), root_set_columns_by_rank[index_rank].end());
+          size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[index_rank].size();
+          for(size_t index_column = 0; index_column < root_set_columns_vector_by_rank_for_index_rank_size; ++index_column){
+            root_column_index_to_local_column_index[index_rank][root_set_columns_vector_by_rank[index_rank][index_column]] = index_column;
+          }
+        }
+      }
+
+      // Create local matrix
+      MatrixMPI A_local(m, local_set_columns.size());
+
+      /* ------------------------------------- Distribute A -------------------------------------------------*/
+      if(rank == ROOT_RANK){
+
+        // Create matrix by rank and send
+        for(auto index_rank = 0; index_rank < size; ++index_rank){
+          std::vector<double> tmp_matrix;
+          for(auto column_index: root_set_columns_vector_by_rank[index_rank]){
+            tmp_matrix.insert(tmp_matrix.end(), A.elements + m*column_index, A.elements + (m*(column_index + 1)));
+          }
+/*
+
+//          std::cout << "send rank: " << index_rank << ", local matrix size: " << tmp_matrix.size() << ", expected matrix size: " << m * root_set_columns_by_rank[index_rank].size() << '\n';
+//
+//          for(auto index_row = 0; index_row < m; ++index_row){
+//            size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[index_rank].size();
+//            for(auto index_col = 0; index_col < root_set_columns_vector_by_rank_for_index_rank_size; ++index_col){
+//              std::cout << tmp_matrix[iteratorC(index_row, index_col, m)] << ", ";
+//            }
+//            std::cout << "\n";
+//          }
+*/
+          MatrixMPI A_rank(tmp_matrix, m, root_set_columns_by_rank[index_rank].size());
+
+          tmp_matrix.clear();
+/*
+//          std::cout << "rank: " << index_rank << ", local matrix size: " << tmp_matrix.size() << ", expected matrix size: " << m * root_set_columns_by_rank[index_rank].size() << '\n';
+//
+//          for(auto index_row = 0; index_row < m; ++index_row){
+//            for(auto index_col = 0; index_col < root_set_columns_vector_by_rank[index_rank].size(); ++index_col){
+//              std::cout << A_rank.elements[iteratorC(index_row, index_col, m)] << ", ";
+//            }
+//            std::cout << "\n";
+//          }
+*/
+
+          if(index_rank == ROOT_RANK){
+            A_local = MatrixMPI(A_rank);
+            /*
+//            std::cout << "receive rank: " << rank << ", local matrix size: " << A_local.height * A_local.width << ", expected matrix size: " << m * local_set_columns.size() << '\n';
+//
+//            for(auto index_row = 0; index_row < m; ++index_row){
+//              for(auto index_col = 0; index_col < local_set_columns.size(); ++index_col){
+//                std::cout << A_local.elements[iteratorC(index_row, index_col, m)] << ", ";
+//              }
+//              std::cout << "\n";
+//            }*/
+          } else {
+            auto return_status = MPI_Send(A_rank.elements, m * root_set_columns_by_rank[index_rank].size(), MPI_DOUBLE, index_rank, 0, MPI_COMM_WORLD);
+            if(return_status != MPI_SUCCESS){
+              std::cout << "problem on MPI_Send on rank: " << rank << ", return status" << return_status << "\n";
+            }
+          }
+
+          A_rank.free();
+        }
+      } else {
+        MPI_Status status;
+        auto return_status = MPI_Recv(A_local.elements, m * local_set_columns.size(), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
+        if(return_status != MPI_SUCCESS){
+          std::cout << "problem on MPI_Recv on rank: " << rank << ", return status" << return_status << "\n";
+        }
+      }
+/*
+      std::cout << "receive rank: " << rank << ", local matrix size: " << A_local.height * A_local.width << ", expected matrix size: " << m * local_set_columns.size() << '\n';
+
+      for(auto index_row = 0; index_row < m; ++index_row){
+        for(auto index_col = 0; index_col < local_set_columns.size(); ++index_col){
+          std::cout << A_local.elements[iteratorC(index_row, index_col, m)] << ", ";
+        }
+        std::cout << "\n";
+      }
+ */
+/*
+
+      // Calculate frobenius norm of A_local - A
+      double frobenius_norm = 0.0;
+      // Iterate columns assigned to this rank
+      for(auto column_index: local_set_columns){
+        for(size_t index_row = 0; index_row < m; ++index_row){
+          double sustraction = (A_local.elements[iteratorC(index_row, column_index_to_local_column_index[column_index], m)] - A_test.elements[iteratorC(index_row, column_index, m)]);
+          frobenius_norm += sustraction * sustraction;
+        }
+      }
+
+      std::cout << "||A-USVt||_F: " << sqrt(frobenius_norm) << "\n";
+*/
+
+
+      /* ------------------------------------- Solve local problem -------------------------------------------------*/
+
+      size_t local_points_size = local_points.size();
+      #pragma omp parallel for
+      for(size_t index_local_points = 0; index_local_points < local_points_size; ++index_local_points){
+        // Extract point
+        std::tuple<size_t, size_t> point = local_points[index_local_points];
+
+        size_t p_point = std::get<0>(point);
+        size_t q_point = std::get<1>(point);
+
+        size_t p_point_to_local_index = column_index_to_local_column_index[p_point];
+        size_t q_point_to_local_index = column_index_to_local_column_index[q_point];
+
+//        std::cout << "p: " << p_point << ", q:" << q_point << ", p_transform: " << p_point_to_local_index << ", q_transform: " << q_point_to_local_index << '\n';
+
         double alpha = 0.0, beta = 0.0, gamma = 0.0;
         // \alpha = a_p^T\cdot a_q, \beta = a_p^T\cdot a_p, \gamma = a_q^T\cdot a_q
         double tmp_p, tmp_q;
         for (size_t i = 0; i < m; ++i) {
-          tmp_p = A.elements[iterator(i, p_trans, lda)];
-          tmp_q = A.elements[iterator(i, q_trans, lda)];
+          tmp_p = A_local.elements[iteratorC(i, p_point_to_local_index, lda)];
+          tmp_q = A_local.elements[iteratorC(i, q_point_to_local_index, lda)];
           alpha += tmp_p * tmp_q;
           beta += tmp_p * tmp_p;
           gamma += tmp_q * tmp_q;
         }
 
         // abs(a_p^T\cdot a_q) / sqrt((a_p^T\cdot a_p)(a_q^T\cdot a_q))
-        double convergence_value = abs(alpha) / sqrt(beta * gamma);
-
-//        if (convergence_value > tolerance) {
-
+        double convergence_value = std::abs(alpha) / sqrt(beta * gamma);
         // Schur
-        auto [c_schur, s_schur] = non_sym_Schur_non_ordered(iterator, m, n, A, lda, p_trans, q_trans, alpha);
+        double c_schur = 1.0, s_schur = 0.0;
 
-        double tmp_A_p, tmp_A_q;
-        for (size_t i = 0; i < m; ++i) {
-          tmp_A_p = A.elements[iterator(i, p_trans, lda)];
-          tmp_A_q = A.elements[iterator(i, q_trans, lda)];
-          tmp_p = c_schur * tmp_A_p - s_schur * tmp_A_q;
-          tmp_q = s_schur * tmp_A_p + c_schur * tmp_A_q;
-          A.elements[iterator(i, p_trans, lda)] = tmp_p;
-          A.elements[iterator(i, q_trans, lda)] = tmp_q;
+        if(std::abs(alpha) > TOLERANCE){
+          double tau = (gamma - beta) / (2.0 * alpha);
+          double t = 0.0;
+
+          if (tau >= 0) {
+            t = 1.0 / (tau + sqrt(1 + (tau * tau)));
+          } else {
+            t = 1.0 / (tau - sqrt(1 + (tau * tau)));
+          }
+
+          c_schur = 1.0 / sqrt(1 + (t * t));
+          s_schur = t * c_schur;
+
+          double tmp_A_p, tmp_A_q;
+          for (size_t i = 0; i < m; ++i) {
+            tmp_A_p = A_local.elements[iteratorC(i, p_point_to_local_index, lda)];
+            tmp_A_q = A_local.elements[iteratorC(i, q_point_to_local_index, lda)];
+            tmp_p = c_schur * tmp_A_p - s_schur * tmp_A_q;
+            tmp_q = s_schur * tmp_A_p + c_schur * tmp_A_q;
+            A_local.elements[iteratorC(i, p_point_to_local_index, lda)] = tmp_p;
+            A_local.elements[iteratorC(i, q_point_to_local_index, lda)] = tmp_q;
+          }
         }
-
+        /*
         if (jobv == AllVec || jobv == SomeVec) {
           for (size_t i = 0; i < n; ++i) {
             tmp_p = c_schur * V.elements[iterator(i, p_trans, ldv)] - s_schur * V.elements[iterator(i, q_trans, ldv)];
@@ -780,17 +948,75 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
         */
       }
 
-      int k_ordering_len = round((double) n) / 2.0;
-      MatrixMPI A_local(k_ordering_len, k_ordering_len);
+      /* ----------------------------------- Gather local solutions ------------------------------------------------*/
+      if(rank == ROOT_RANK){
+        for(size_t index_rank = 1; index_rank < size; ++index_rank){
+          // Create local matrix
+          MatrixMPI A_gather(m, root_set_columns_by_rank[index_rank].size());
 
+          MPI_Status status;
+          auto return_status = MPI_Recv(A_gather.elements, m * root_set_columns_by_rank[index_rank].size(), MPI_DOUBLE, index_rank, 0, MPI_COMM_WORLD, &status);
+          if(return_status != MPI_SUCCESS){
+            std::cout << "problem on MPI_Recv on rank: " << rank << ", return status" << return_status << "\n";
+          }
 
+          size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[index_rank].size();
+          #pragma omp parallel for
+          for(size_t index_column = 0; index_column < root_set_columns_vector_by_rank_for_index_rank_size; ++index_column){
+            for(size_t index_row = 0; index_row < m; ++index_row){
+              A.elements[iteratorC(index_row, root_set_columns_vector_by_rank[index_rank][index_column], lda)] = A_gather.elements[iteratorC(index_row, index_column, lda)];
+            }
+          }
+
+          A_gather.free();
+        }
+
+        // Root rank resolve
+        size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[0].size();
+        #pragma omp parallel for
+        for(size_t index_column = 0; index_column < root_set_columns_vector_by_rank_for_index_rank_size; ++index_column){
+          for(size_t index_row = 0; index_row < m; ++index_row){
+            A.elements[iteratorC(index_row, root_set_columns_vector_by_rank[0][index_column], lda)] = A_local.elements[iteratorC(index_row, index_column, lda)];
+          }
+        }
+      } else {
+        auto return_status = MPI_Send(A_local.elements, m * local_set_columns.size(), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+        if(return_status != MPI_SUCCESS){
+          std::cout << "problem on MPI_Send on rank: " << rank << ", return status" << return_status << "\n";
+        }
+      }
+
+      // Free local matrix
+      A_local.free();
     }
 
     for (size_t k = m_ordering; k < 2 * m_ordering; ++k) {
       size_t p = 0;
       size_t p_trans = 0;
       size_t q_trans = 0;
-#pragma omp parallel for private(p, p_trans, q_trans)
+
+      /* --------------------------------------- Local variables ----------------------------------------------*/
+      // All points vector tuple
+      std::vector<std::tuple<size_t, size_t>> local_points;
+      // Ordered set of coordinates
+      std::set<size_t> local_set_columns;
+      // Set converted to vector
+      std::vector<size_t> local_set_to_vector;
+      // Local map that convert point coordinate to local column index
+      std::unordered_map<size_t, size_t> column_index_to_local_column_index;
+      /* --------------------------------------- Root rank variables ----------------------------------------------*/
+      // Distribution of points by node (index is rank, and content is vector of points). To use for data distribution and extraction.
+      std::vector<std::vector<std::tuple<size_t, size_t>>> root_distribution(size);
+      // ordered set of points by rank. To use for data distribution and extraction.
+      std::vector<std::set<size_t>> root_set_columns_by_rank(size);
+      // convert to vector to map
+      std::vector<std::vector<size_t>> root_set_columns_vector_by_rank(size);
+      // Assign column index to set index.
+      std::vector<std::unordered_map<size_t, size_t>> root_column_index_to_local_column_index(size);
+
+
+      /* ------------------------------------- Query points for k -------------------------------------------------*/
+#pragma omp parallel for num_threads(size) private(p, p_trans, q_trans)
       for (size_t q = (4 * m_ordering) - n - k; q < (3 * m_ordering) - k; ++q) {
         if (q < (2 * m_ordering) - k + 1) {
           p = n;
@@ -804,34 +1030,174 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
         p_trans = p - 1;
         q_trans = q - 1;
 
+        if(rank == ROOT_RANK){
+//          std::cout << "(" << p_trans << ", " << q_trans << ")\n";
+//          std::cout << "(" << omp_get_thread_num() << ")\n";
+          root_distribution[omp_get_thread_num()].emplace_back(p_trans, q_trans);
+          root_set_columns_by_rank[omp_get_thread_num()].insert(p_trans);
+          root_set_columns_by_rank[omp_get_thread_num()].insert(q_trans);
+        }
+
+        if(rank == omp_get_thread_num()){
+//          std::cout << "local point rank: " << rank << ", (" << p_trans << ", " << q_trans << ")\n";
+          local_points.emplace_back(p_trans,q_trans);
+          local_set_columns.insert(p_trans);
+          local_set_columns.insert(q_trans);
+        }
+      }
+
+      // convert local set to vector
+      local_set_to_vector = std::vector<size_t>(local_set_columns.begin(), local_set_columns.end());
+      // map coordinates to local column indices
+      size_t local_set_to_vector_size = local_set_to_vector.size();
+      for(auto i = 0; i < local_set_to_vector_size; ++i){
+        column_index_to_local_column_index[local_set_to_vector[i]] = i;
+      }
+
+      if(rank == ROOT_RANK){
+        for(auto index_rank = 0; index_rank < size; ++index_rank){
+          root_set_columns_vector_by_rank[index_rank] = std::vector<size_t>(root_set_columns_by_rank[index_rank].begin(), root_set_columns_by_rank[index_rank].end());
+          size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[index_rank].size();
+          for(size_t index_column = 0; index_column < root_set_columns_vector_by_rank_for_index_rank_size; ++index_column){
+            root_column_index_to_local_column_index[index_rank][root_set_columns_vector_by_rank[index_rank][index_column]] = index_column;
+          }
+        }
+      }
+
+      // Create local matrix
+      MatrixMPI A_local(m, local_set_columns.size());
+
+      /* ------------------------------------- Distribute A -------------------------------------------------*/
+      if(rank == ROOT_RANK){
+
+        // Create matrix by rank and send
+        for(auto index_rank = 0; index_rank < size; ++index_rank){
+          std::vector<double> tmp_matrix;
+          for(auto column_index: root_set_columns_vector_by_rank[index_rank]){
+            tmp_matrix.insert(tmp_matrix.end(), A.elements + m*column_index, A.elements + (m*(column_index + 1)));
+          }
+/*
+
+//          std::cout << "send rank: " << index_rank << ", local matrix size: " << tmp_matrix.size() << ", expected matrix size: " << m * root_set_columns_by_rank[index_rank].size() << '\n';
+//
+//          for(auto index_row = 0; index_row < m; ++index_row){
+//            size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[index_rank].size();
+//            for(auto index_col = 0; index_col < root_set_columns_vector_by_rank_for_index_rank_size; ++index_col){
+//              std::cout << tmp_matrix[iteratorC(index_row, index_col, m)] << ", ";
+//            }
+//            std::cout << "\n";
+//          }
+*/
+
+          MatrixMPI A_rank(tmp_matrix, m, root_set_columns_by_rank[index_rank].size());
+
+          tmp_matrix.clear();
+/*
+//          std::cout << "rank: " << index_rank << ", local matrix size: " << tmp_matrix.size() << ", expected matrix size: " << m * root_set_columns_by_rank[index_rank].size() << '\n';
+//
+//          for(auto index_row = 0; index_row < m; ++index_row){
+//            for(auto index_col = 0; index_col < root_set_columns_vector_by_rank[index_rank].size(); ++index_col){
+//              std::cout << A_rank.elements[iteratorC(index_row, index_col, m)] << ", ";
+//            }
+//            std::cout << "\n";
+//          }
+*/
+
+          if(index_rank == ROOT_RANK){
+            A_local = MatrixMPI(A_rank);
+            /*
+//            std::cout << "receive rank: " << rank << ", local matrix size: " << A_local.height * A_local.width << ", expected matrix size: " << m * local_set_columns.size() << '\n';
+//
+//            for(auto index_row = 0; index_row < m; ++index_row){
+//              for(auto index_col = 0; index_col < local_set_columns.size(); ++index_col){
+//                std::cout << A_local.elements[iteratorC(index_row, index_col, m)] << ", ";
+//              }
+//              std::cout << "\n";
+//            }*/
+          } else {
+            auto return_status = MPI_Send(A_rank.elements, m * root_set_columns_by_rank[index_rank].size(), MPI_DOUBLE, index_rank, 0, MPI_COMM_WORLD);
+            if(return_status != MPI_SUCCESS){
+              std::cout << "problem on MPI_Send on rank: " << rank << ", return status" << return_status << "\n";
+            }
+          }
+
+          A_rank.free();
+        }
+      } else {
+        MPI_Status status;
+        auto return_status = MPI_Recv(A_local.elements, m * local_set_columns.size(), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
+        if(return_status != MPI_SUCCESS){
+          std::cout << "problem on MPI_Recv on rank: " << rank << ", return status" << return_status << "\n";
+        }
+      }
+/*
+//      std::cout << "receive rank: " << rank << ", local matrix size: " << A_local.height * A_local.width << ", expected matrix size: " << m * local_set_columns.size() << '\n';
+//
+//      for(auto index_row = 0; index_row < m; ++index_row){
+//        for(auto index_col = 0; index_col < local_set_columns.size(); ++index_col){
+//          std::cout << A_local.elements[iteratorC(index_row, index_col, m)] << ", ";
+//        }
+//        std::cout << "\n";
+//      }
+ */
+
+
+      /* ------------------------------------- Solve local problem -------------------------------------------------*/
+      size_t local_points_size = local_points.size();
+#pragma omp parallel for
+      for(size_t index_local_points = 0; index_local_points < local_points_size; ++index_local_points){
+        // Extract point
+        std::tuple<size_t, size_t> point = local_points[index_local_points];
+
+        size_t p_point = std::get<0>(point);
+        size_t q_point = std::get<1>(point);
+
+        size_t p_point_to_local_index = column_index_to_local_column_index[p_point];
+        size_t q_point_to_local_index = column_index_to_local_column_index[q_point];
+
+//        std::cout << "p: " << p_point << ", q:" << q_point << ", p_transform: " << p_point_to_local_index << ", q_transform: " << q_point_to_local_index << '\n';
+
         double alpha = 0.0, beta = 0.0, gamma = 0.0;
         // \alpha = a_p^T\cdot a_q, \beta = a_p^T\cdot a_p, \gamma = a_q^T\cdot a_q
         double tmp_p, tmp_q;
         for (size_t i = 0; i < m; ++i) {
-          tmp_p = A.elements[iterator(i, p_trans, lda)];
-          tmp_q = A.elements[iterator(i, q_trans, lda)];
+          tmp_p = A_local.elements[iteratorC(i, p_point_to_local_index, lda)];
+          tmp_q = A_local.elements[iteratorC(i, q_point_to_local_index, lda)];
           alpha += tmp_p * tmp_q;
           beta += tmp_p * tmp_p;
           gamma += tmp_q * tmp_q;
         }
 
-        // (a_p^T\cdot a_q)^2 / (a_p^T\cdot a_p)(a_q^T\cdot a_q)
-        double convergence_value = abs(alpha) / sqrt(beta * gamma);
-
-//        if (convergence_value > tolerance) {
-        // (a_p^T\cdot a_q)^2 / (a_p^T\cdot a_p)(a_q^T\cdot a_q) > tolerance
+        // abs(a_p^T\cdot a_q) / sqrt((a_p^T\cdot a_p)(a_q^T\cdot a_q))
+        double convergence_value = std::abs(alpha) / sqrt(beta * gamma);
         // Schur
-        auto [c_schur, s_schur] = non_sym_Schur_non_ordered(iterator, m, n, A, lda, p_trans, q_trans, alpha);
+        double c_schur = 1.0, s_schur = 0.0;
 
-        double A_tmp_p, A_tmp_q;
-        for (size_t i = 0; i < m; ++i) {
-          A_tmp_p = A.elements[iterator(i, p_trans, lda)];
-          A_tmp_q = A.elements[iterator(i, q_trans, lda)];
-          tmp_p = c_schur * A_tmp_p - s_schur * A_tmp_q;
-          tmp_q = s_schur * A_tmp_p + c_schur * A_tmp_q;
-          A.elements[iterator(i, p_trans, lda)] = tmp_p;
-          A.elements[iterator(i, q_trans, lda)] = tmp_q;
+        if(std::abs(alpha) > TOLERANCE){
+          double tau = (gamma - beta) / (2.0 * alpha);
+          double t = 0.0;
+
+          if (tau >= 0) {
+            t = 1.0 / (tau + sqrt(1 + (tau * tau)));
+          } else {
+            t = 1.0 / (tau - sqrt(1 + (tau * tau)));
+          }
+
+          c_schur = 1.0 / sqrt(1 + (t * t));
+          s_schur = t * c_schur;
+
+          double tmp_A_p, tmp_A_q;
+          for (size_t i = 0; i < m; ++i) {
+            tmp_A_p = A_local.elements[iteratorC(i, p_point_to_local_index, lda)];
+            tmp_A_q = A_local.elements[iteratorC(i, q_point_to_local_index, lda)];
+            tmp_p = c_schur * tmp_A_p - s_schur * tmp_A_q;
+            tmp_q = s_schur * tmp_A_p + c_schur * tmp_A_q;
+            A_local.elements[iteratorC(i, p_point_to_local_index, lda)] = tmp_p;
+            A_local.elements[iteratorC(i, q_point_to_local_index, lda)] = tmp_q;
+          }
         }
+/*
+
         if (jobv == AllVec || jobv == SomeVec) {
           for (size_t i = 0; i < n; ++i) {
             tmp_p = c_schur * V.elements[iterator(i, p_trans, ldv)] - s_schur * V.elements[iterator(i, q_trans, ldv)];
@@ -840,28 +1206,53 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
             V.elements[iterator(i, q_trans, ldv)] = tmp_q;
           }
         }
-//        } else {
-//          ++istop;
-//        }
+        */
+      }
 
-#ifdef DEBUG
-        // Report Matrix A^T * A
-      std::cout << std::fixed << std::setprecision(3) << "A^T * A: \n";
-      for (size_t indexRow = 0; indexRow < m; ++indexRow) {
-        for (size_t indexCol = 0; indexCol < n; ++indexCol) {
-          double value = 0.0;
-          for(size_t k_dot = 0; k_dot < m; ++k_dot){
-            value += A.elements[iterator(k_dot, indexRow, lda)] * A.elements[iterator(k_dot, indexCol, lda)];
+      /* ----------------------------------- Gather local solutions ------------------------------------------------*/
+      if(rank == ROOT_RANK){
+        for(size_t index_rank = 1; index_rank < size; ++index_rank){
+          // Create local matrix
+          MatrixMPI A_gather(m, root_set_columns_by_rank[index_rank].size());
+
+          MPI_Status status;
+          auto return_status = MPI_Recv(A_gather.elements, m * root_set_columns_by_rank[index_rank].size(), MPI_DOUBLE, index_rank, 0, MPI_COMM_WORLD, &status);
+          if(return_status != MPI_SUCCESS){
+            std::cout << "problem on MPI_Recv on rank: " << rank << ", return status" << return_status << "\n";
           }
-          std::cout << value << " ";
+
+          size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[index_rank].size();
+#pragma omp parallel for
+          for(size_t index_column = 0; index_column < root_set_columns_vector_by_rank_for_index_rank_size; ++index_column){
+            for(size_t index_row = 0; index_row < m; ++index_row){
+              A.elements[iteratorC(index_row, root_set_columns_vector_by_rank[index_rank][index_column], lda)] = A_gather.elements[iteratorC(index_row, index_column, lda)];
+            }
+          }
+
+          A_gather.free();
         }
-        std::cout << '\n';
+
+        // Root rank resolve
+        size_t root_set_columns_vector_by_rank_for_index_rank_size = root_set_columns_vector_by_rank[0].size();
+#pragma omp parallel for
+        for(size_t index_column = 0; index_column < root_set_columns_vector_by_rank_for_index_rank_size; ++index_column){
+          for(size_t index_row = 0; index_row < m; ++index_row){
+            A.elements[iteratorC(index_row, root_set_columns_vector_by_rank[0][index_column], lda)] = A_local.elements[iteratorC(index_row, index_column, lda)];
+          }
+        }
+      } else {
+        auto return_status = MPI_Send(A_local.elements, m * local_set_columns.size(), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+        if(return_status != MPI_SUCCESS){
+          std::cout << "problem on MPI_Send on rank: " << rank << ", return status" << return_status << "\n";
+        }
       }
-#endif
-      }
+
+      // Free local matrix
+      A_local.free();
     }
 
-  } while (++reps < maxIterations);
+  }
+/*
 
   if(rank == ROOT_RANK){
     // Compute \Sigma
@@ -892,6 +1283,6 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
       }
     }
   }
-
+*/
 }
 }

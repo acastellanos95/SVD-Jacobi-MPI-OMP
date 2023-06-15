@@ -6,6 +6,7 @@
 #include <fstream>
 #include <random>
 #include <mkl/mkl.h>
+#include <set>
 #include "mpi.h"
 #include "lib/Matrix.h"
 #include "lib/JacobiMethods.h"
@@ -27,15 +28,13 @@ int main(int argc, char **argv) {
   std::stringstream file_output;
   std::ostringstream oss;
   std::string now_time;
-  size_t height = 100;
-  size_t width = 100;
+  size_t height = 20;
+  size_t width = 20;
 
   MatrixMPI A, V, s, A_copy;
 
   // Select iterator
   auto iterator = Thesis::IteratorC;
-
-  MPI_Barrier(MPI_COMM_WORLD);
 
   if (rank == ROOT_RANK) {
     // Initialize other variables
@@ -77,43 +76,54 @@ int main(int argc, char **argv) {
 
   // Calculate SVD decomposition
   double ti = omp_get_wtime();
-  Thesis::omp_mpi_dgesvd(Thesis::AllVec,
-                         Thesis::AllVec,
-                         height,
-                         width,
-                         A,
-                         height,
-                         s,
-                         V,
-                         width);
+//  Thesis::omp_mpi_dgesvd(Thesis::AllVec,
+//                         Thesis::AllVec,
+//                         height,
+//                         width,
+//                         A,
+//                         height,
+//                         s,
+//                         V,
+//                         width);
+//  Thesis::Tests::test_local_matrix_distribution_in_sublocal_matrices(height, width, A, height);
+  Thesis::Tests::test_local_matrix_distribution_on_the_fly(height, width, A, height);
   double tf = omp_get_wtime();
   double time = tf - ti;
 
   if (rank == ROOT_RANK) {
 
-    file_output << "SVD OMP time with U,V calculation: " << time << "\n";
-    std::cout << "SVD OMP time with U,V calculation: " << time << "\n";
+    file_output << "SVD MPI+OMP time with U,V calculation: " << time << "\n";
+    std::cout << "SVD MPI+OMP time with U,V calculation: " << time << "\n";
 
-    double maxError = 0.0;
-    #pragma omp parallel for reduction(max:maxError)
+    // A - A*
+    #pragma omp parallel for
     for (size_t indexRow = 0; indexRow < height; ++indexRow) {
       for (size_t indexCol = 0; indexCol < width; ++indexCol) {
         double value = 0.0;
-        for (size_t k_dot = 0; k_dot < width; ++k_dot) {
-          value += A.elements[iterator(indexRow, k_dot, height)] * (s.elements[k_dot])
-              * V.elements[iterator(indexCol, k_dot, height)];
-        }
-        double diff = std::abs(A_copy.elements[iterator(indexRow, indexCol, height)] - value);
-        maxError = std::max<double>(maxError, diff);
+        /*for (size_t k_dot = 0; k_dot < width; ++k_dot) {
+          value += U.elements[iteratorC(indexRow, k_dot, A_height)] * s.elements[k_dot]
+              * V.elements[iteratorC(indexCol, k_dot, A_height)];
+        }*/
+        A_copy.elements[iteratorC(indexRow, indexCol, height)] -= A.elements[iteratorC(indexRow, indexCol, height)];
       }
     }
 
-    file_output << "max error between A and USV: " << maxError << "\n";
-    std::cout << "max error between A and USV: " << maxError << "\n";
+    // Calculate frobenius norm
+    double frobenius_norm = 0.0;
+#pragma omp parallel for reduction(+:frobenius_norm)
+    for (size_t indexRow = 0; indexRow < height; ++indexRow) {
+      for (size_t indexCol = 0; indexCol < width; ++indexCol) {
+        double value = A_copy.elements[iteratorC(indexRow, indexCol, height)];
+        frobenius_norm += value*value;
+      }
+    }
 
-    std::ofstream file("reporte-" + now_time + ".txt", std::ofstream::out | std::ofstream::trunc);
-    file << file_output.rdbuf();
-    file.close();
+    file_output << "||A-USVt||_F: " << sqrt(frobenius_norm) << "\n";
+    std::cout << "||A-USVt||_F: " << sqrt(frobenius_norm) << "\n";
+
+//    std::ofstream file("reporte-" + now_time + ".txt", std::ofstream::out | std::ofstream::trunc);
+//    file << file_output.rdbuf();
+//    file.close();
     A.free(), V.free(), s.free(), A_copy.free();
   }
 

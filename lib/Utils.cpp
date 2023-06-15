@@ -178,4 +178,11 @@ std::function<size_t(size_t, size_t, size_t)> get_iterator(MATRIX_LAYOUT matrix_
     return IteratorC;
 }
 
+int omp_thread_count() {
+  int n = 0;
+  #pragma omp parallel reduction(+:n)
+  n += 1;
+  return n;
+}
+
 } // Thesis

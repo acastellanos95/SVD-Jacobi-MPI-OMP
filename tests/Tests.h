@@ -6,12 +6,29 @@
 #define SVD_JACOBI_MPI_OMP_TESTS_TESTS_H_
 
 #include <mpi.h>
+#include <omp.h>
+#include <random>
+#include <vector>
+#include <set>
+#include <unordered_map>
+#include <map>
+#include "../lib/Matrix.h"
+#include "../lib/global.h"
+#include "../lib/Utils.h"
 
 namespace Thesis {
 
 class Tests {
-  public:
-    void check_mpi_rank();
+ public:
+  void static check_mpi_rank();
+  void static test_local_matrix_distribution_in_sublocal_matrices(size_t m,
+                                                                  size_t n,
+                                                                  MatrixMPI &A,
+                                                                  size_t lda);
+  void static test_local_matrix_distribution_on_the_fly(size_t m,
+                                                        size_t n,
+                                                        MatrixMPI &A,
+                                                        size_t lda);
 };
 
 }

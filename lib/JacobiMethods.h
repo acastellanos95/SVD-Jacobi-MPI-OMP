@@ -7,6 +7,8 @@
 
 #include <iostream>
 #include <iomanip>
+#include <unordered_map>
+#include <random>
 #include <omp.h>
 #include <mpi.h>
 #include "Matrix.h"
