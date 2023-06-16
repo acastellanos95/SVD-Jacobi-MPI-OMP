@@ -76,7 +76,7 @@ void omp_dgesvd(SVD_OPTIONS jobu,
  * @param V
  * @param ldv
  */
-void omp_mpi_dgesvd(SVD_OPTIONS jobu,
+void omp_mpi_dgesvd_local_matrices(SVD_OPTIONS jobu,
                 SVD_OPTIONS jobv,
                 size_t m,
                 size_t n,
@@ -85,6 +85,16 @@ void omp_mpi_dgesvd(SVD_OPTIONS jobu,
                 MatrixMPI &s,
                 MatrixMPI &V,
                 size_t ldv);
+
+void omp_mpi_dgesvd_on_the_fly_matrices(SVD_OPTIONS jobu,
+                                   SVD_OPTIONS jobv,
+                                   size_t m,
+                                   size_t n,
+                                   MatrixMPI &A,
+                                   size_t lda,
+                                   MatrixMPI &s,
+                                   MatrixMPI &V,
+                                   size_t ldv);
 }
 
 #endif //SVD_JACOBI_MPI_OMP_LIB_JACOBIMETHODS_H_

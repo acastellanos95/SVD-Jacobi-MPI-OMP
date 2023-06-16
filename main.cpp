@@ -28,8 +28,8 @@ int main(int argc, char **argv) {
   std::stringstream file_output;
   std::ostringstream oss;
   std::string now_time;
-  size_t height = 20;
-  size_t width = 20;
+  size_t height = 100;
+  size_t width = 100;
 
   MatrixMPI A, V, s, A_copy;
 
@@ -76,17 +76,17 @@ int main(int argc, char **argv) {
 
   // Calculate SVD decomposition
   double ti = omp_get_wtime();
-//  Thesis::omp_mpi_dgesvd(Thesis::AllVec,
-//                         Thesis::AllVec,
-//                         height,
-//                         width,
-//                         A,
-//                         height,
-//                         s,
-//                         V,
-//                         width);
+  Thesis::omp_mpi_dgesvd_local_matrices(Thesis::AllVec,
+                         Thesis::AllVec,
+                         height,
+                         width,
+                         A,
+                         height,
+                         s,
+                         V,
+                         width);
 //  Thesis::Tests::test_local_matrix_distribution_in_sublocal_matrices(height, width, A, height);
-  Thesis::Tests::test_local_matrix_distribution_on_the_fly(height, width, A, height);
+//  Thesis::Tests::test_local_matrix_distribution_on_the_fly(height, width, A, height);
   double tf = omp_get_wtime();
   double time = tf - ti;
 
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
 
     // Calculate frobenius norm
     double frobenius_norm = 0.0;
-#pragma omp parallel for reduction(+:frobenius_norm)
+    #pragma omp parallel for reduction(+:frobenius_norm)
     for (size_t indexRow = 0; indexRow < height; ++indexRow) {
       for (size_t indexCol = 0; indexCol < width; ++indexCol) {
         double value = A_copy.elements[iteratorC(indexRow, indexCol, height)];
