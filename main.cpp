@@ -5,7 +5,7 @@
 #include <omp.h>
 #include <fstream>
 #include <random>
-#include <mkl/mkl.h>
+//#include <mkl/mkl.h>
 #include <set>
 #include "mpi.h"
 #include "lib/Matrix.h"
@@ -28,8 +28,8 @@ int main(int argc, char **argv) {
   std::stringstream file_output;
   std::ostringstream oss;
   std::string now_time;
-  size_t height = 100;
-  size_t width = 100;
+  size_t height = std::stoul(argv[1]);
+  size_t width = std::stoul(argv[1]);
 
   MatrixMPI A, V, s, A_copy;
 
@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
   auto iterator = Thesis::IteratorC;
 
   if (rank == ROOT_RANK) {
+    std::cout << "height: " << height << ", width: " << width << '\n';
     // Initialize other variables
 
     t = std::time(nullptr);
@@ -116,31 +117,31 @@ int main(int argc, char **argv) {
   if (rank == ROOT_RANK) {
 
     // Report \Sigma
-    file_output << std::fixed << std::setprecision(3) << "sigma: \n";
-    std::cout << std::fixed << std::setprecision(3) << "sigma: \n";
-    for (size_t indexCol = 0; indexCol < std::min(height, width); ++indexCol) {
-      file_output << s.elements[indexCol] << " ";
-      std::cout << s.elements[indexCol] << " ";
-    }
-    file_output << '\n';
-    std::cout << '\n';
-
-    // Report Matrix V
-    file_output << std::fixed << std::setprecision(3) << "V: \n";
-    std::cout << std::fixed << std::setprecision(3) << "V: \n";
-    for (size_t indexRow = 0; indexRow < height; ++indexRow) {
-      for (size_t indexCol = 0; indexCol < width; ++indexCol) {
-        file_output << V.elements[Thesis::IteratorC(indexRow, indexCol, width)] << " ";
-        std::cout << V.elements[Thesis::IteratorC(indexRow, indexCol, width)] << " ";
-      }
-      file_output << '\n';
-      std::cout << '\n';
-    }
-
+//    file_output << std::fixed << std::setprecision(3) << "sigma: \n";
+//    std::cout << std::fixed << std::setprecision(3) << "sigma: \n";
+//    for (size_t indexCol = 0; indexCol < std::min(height, width); ++indexCol) {
+//      file_output << s.elements[indexCol] << " ";
+//      std::cout << s.elements[indexCol] << " ";
+//    }
+//    file_output << '\n';
+//    std::cout << '\n';
+//
+//    // Report Matrix V
+//    file_output << std::fixed << std::setprecision(3) << "V: \n";
+//    std::cout << std::fixed << std::setprecision(3) << "V: \n";
+//    for (size_t indexRow = 0; indexRow < height; ++indexRow) {
+//      for (size_t indexCol = 0; indexCol < width; ++indexCol) {
+//        file_output << V.elements[Thesis::IteratorC(indexRow, indexCol, width)] << " ";
+//        std::cout << V.elements[Thesis::IteratorC(indexRow, indexCol, width)] << " ";
+//      }
+//      file_output << '\n';
+//      std::cout << '\n';
+//    }
+//
     file_output << "SVD MPI+OMP time with U,V calculation: " << time << "\n";
     std::cout << "SVD MPI+OMP time with U,V calculation: " << time << "\n";
 
-    // A - A*
+//    // A - A*
     #pragma omp parallel for
     for (size_t indexRow = 0; indexRow < height; ++indexRow) {
       for (size_t indexCol = 0; indexCol < width; ++indexCol) {
@@ -167,9 +168,9 @@ int main(int argc, char **argv) {
     file_output << "||A-USVt||_F: " << sqrt(frobenius_norm) << "\n";
     std::cout << "||A-USVt||_F: " << sqrt(frobenius_norm) << "\n";
 
-//    std::ofstream file("reporte-" + now_time + ".txt", std::ofstream::out | std::ofstream::trunc);
-//    file << file_output.rdbuf();
-//    file.close();
+    std::ofstream file("reporte-dimension-" + std::to_string(height) + "-time-" + now_time + ".txt", std::ofstream::out | std::ofstream::trunc);
+    file << file_output.rdbuf();
+    file.close();
     A.free(), V.free(), s.free(), A_copy.free();
   }
 

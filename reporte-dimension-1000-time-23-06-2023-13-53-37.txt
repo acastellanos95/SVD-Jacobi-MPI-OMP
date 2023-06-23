@@ -1,0 +1,4 @@
+Number of threads: 1
+Dimensions, height: 1000, width: 1000
+SVD MPI+OMP time with U,V calculation: 12.8781
+||A-USVt||_F: 1.11236e-11
