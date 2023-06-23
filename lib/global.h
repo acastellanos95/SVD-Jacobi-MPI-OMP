@@ -15,4 +15,6 @@
 #define iteratorR(i,j,ld)(((i)*(ld))+(j))
 #define iteratorC(i,j,ld)(((j)*(ld))+(i))
 
+//#define TESTS
+
 #endif //SVD_JACOBI_MPI_OMP_LIB_GLOBAL_H_

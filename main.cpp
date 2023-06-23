@@ -69,11 +69,22 @@ int main(int argc, char **argv) {
       }
     }
 
+#ifdef TESTS
+    std::default_random_engine e_test(seed);
+    std::uniform_real_distribution<double> uniform_dist_test(0.0, 1.0);
+    for (size_t indexRow = 0; indexRow < height; ++indexRow) {
+      for (size_t indexCol = 0; indexCol < width; ++indexCol) {
+        double value = uniform_dist_test(e_test);
+        A.elements[iterator(indexRow, indexCol, height)] = value;
+        A_copy.elements[iterator(indexRow, indexCol, height)] = value;
+      }
+    }
+#endif
+
     file_output << "Number of threads: " << omp_get_num_threads() << '\n';
     file_output << "Dimensions, height: " << height << ", width: " << width << "\n";
     std::cout << "Dimensions, height: " << height << ", width: " << width << "\n";
   }
-
   // Calculate SVD decomposition
   double ti = omp_get_wtime();
   Thesis::omp_mpi_dgesvd_local_matrices(Thesis::AllVec,
@@ -85,12 +96,46 @@ int main(int argc, char **argv) {
                          s,
                          V,
                          width);
-//  Thesis::Tests::test_local_matrix_distribution_in_sublocal_matrices(height, width, A, height);
-//  Thesis::Tests::test_local_matrix_distribution_on_the_fly(height, width, A, height);
+//  Thesis::omp_mpi_dgesvd_on_the_fly_matrices(Thesis::AllVec,
+//                                        Thesis::AllVec,
+//                                        height,
+//                                        width,
+//                                        A,
+//                                        height,
+//                                        s,
+//                                        V,
+//                                        width);
+//  Thesis::Tests::test_local_matrix_distribution_in_sublocal_matrices_blocking(height, width, A, height);
+//  Thesis::Tests::test_local_matrix_distribution_in_sublocal_matrices_concurrent(height, width, A, height);
+//  Thesis::Tests::test_local_matrix_distribution_on_the_fly_concurrent(height, width, A, height);
+//  Thesis::Tests::test_local_matrix_distribution_on_the_fly_blocking(height, width, A, height);
+//  Thesis::Tests::test_MPI_Isend_Recv();
   double tf = omp_get_wtime();
   double time = tf - ti;
 
   if (rank == ROOT_RANK) {
+
+    // Report \Sigma
+    file_output << std::fixed << std::setprecision(3) << "sigma: \n";
+    std::cout << std::fixed << std::setprecision(3) << "sigma: \n";
+    for (size_t indexCol = 0; indexCol < std::min(height, width); ++indexCol) {
+      file_output << s.elements[indexCol] << " ";
+      std::cout << s.elements[indexCol] << " ";
+    }
+    file_output << '\n';
+    std::cout << '\n';
+
+    // Report Matrix V
+    file_output << std::fixed << std::setprecision(3) << "V: \n";
+    std::cout << std::fixed << std::setprecision(3) << "V: \n";
+    for (size_t indexRow = 0; indexRow < height; ++indexRow) {
+      for (size_t indexCol = 0; indexCol < width; ++indexCol) {
+        file_output << V.elements[Thesis::IteratorC(indexRow, indexCol, width)] << " ";
+        std::cout << V.elements[Thesis::IteratorC(indexRow, indexCol, width)] << " ";
+      }
+      file_output << '\n';
+      std::cout << '\n';
+    }
 
     file_output << "SVD MPI+OMP time with U,V calculation: " << time << "\n";
     std::cout << "SVD MPI+OMP time with U,V calculation: " << time << "\n";
@@ -100,11 +145,12 @@ int main(int argc, char **argv) {
     for (size_t indexRow = 0; indexRow < height; ++indexRow) {
       for (size_t indexCol = 0; indexCol < width; ++indexCol) {
         double value = 0.0;
-        /*for (size_t k_dot = 0; k_dot < width; ++k_dot) {
-          value += U.elements[iteratorC(indexRow, k_dot, A_height)] * s.elements[k_dot]
-              * V.elements[iteratorC(indexCol, k_dot, A_height)];
-        }*/
-        A_copy.elements[iteratorC(indexRow, indexCol, height)] -= A.elements[iteratorC(indexRow, indexCol, height)];
+        for (size_t k_dot = 0; k_dot < width; ++k_dot) {
+          value += A.elements[iteratorC(indexRow, k_dot, height)] * s.elements[k_dot]
+              * V.elements[iteratorC(indexCol, k_dot, height)];
+        }
+        A_copy.elements[iteratorC(indexRow, indexCol, height)] -= value;
+//        A_copy.elements[iteratorC(indexRow, indexCol, height)] -= A.elements[iteratorC(indexRow, indexCol, height)];
       }
     }
 

@@ -21,14 +21,23 @@ namespace Thesis {
 class Tests {
  public:
   void static check_mpi_rank();
-  void static test_local_matrix_distribution_in_sublocal_matrices(size_t m,
+  void static test_local_matrix_distribution_in_sublocal_matrices_blocking(size_t m,
                                                                   size_t n,
                                                                   MatrixMPI &A,
                                                                   size_t lda);
-  void static test_local_matrix_distribution_on_the_fly(size_t m,
+  void static test_local_matrix_distribution_on_the_fly_blocking(size_t m,
                                                         size_t n,
                                                         MatrixMPI &A,
                                                         size_t lda);
+  void static test_local_matrix_distribution_in_sublocal_matrices_concurrent(size_t m,
+                                                                  size_t n,
+                                                                  MatrixMPI &A,
+                                                                  size_t lda);
+  void static test_local_matrix_distribution_on_the_fly_concurrent(size_t m,
+                                                        size_t n,
+                                                        MatrixMPI &A,
+                                                        size_t lda);
+  static void test_MPI_Isend_Recv();
 };
 
 }
