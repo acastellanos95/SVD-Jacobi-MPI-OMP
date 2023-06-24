@@ -1,0 +1,4 @@
+Number of threads: 1
+Dimensions, height: 20, width: 20
+SVD OMP time with U,V calculation: 0.0113621
+max error between A and USV: 0.999941

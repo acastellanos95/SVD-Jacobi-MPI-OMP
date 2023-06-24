@@ -1,0 +1,3 @@
+Number of threads: 1
+Dimensions, height: 20, width: 20
+||A-USVt||_F: 10.4956
